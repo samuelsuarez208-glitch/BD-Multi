@@ -22,7 +22,6 @@ DB_PATH = Path(
 )
 
 
-@st.cache_resource
 def obtener_repositorio(db_path: str) -> InventoryRepository:
     return InventoryRepository(db_path)
 
