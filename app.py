@@ -1,4 +1,6 @@
 import math
+import os
+from collections.abc import Mapping
 
 import pandas as pd
 import streamlit as st
@@ -9,15 +11,64 @@ CATEGORIAS = ["Comida", "Ropa", "Electrodomésticos", "Otros"]
 COLUMNAS = ["id", "nombre", "categoria", "precio", "cantidad"]
 
 
-@st.cache_resource
+def obtener_configuracion_supabase(
+    secrets: Mapping | None = None, environ: Mapping | None = None
+) -> tuple[str, str]:
+    if secrets is None:
+        secrets = st.secrets
+    if environ is None:
+        environ = os.environ
+
+    nested = secrets.get("supabase", {})
+    if not isinstance(nested, Mapping):
+        nested = {}
+
+    url = (
+        secrets.get("SUPABASE_URL")
+        or nested.get("url")
+        or environ.get("SUPABASE_URL")
+    )
+    key = (
+        secrets.get("SUPABASE_KEY")
+        or secrets.get("SUPABASE_ANON_KEY")
+        or secrets.get("SUPABASE_PUBLISHABLE_KEY")
+        or nested.get("key")
+        or nested.get("anon_key")
+        or environ.get("SUPABASE_KEY")
+        or environ.get("SUPABASE_ANON_KEY")
+    )
+
+    faltantes = []
+    if not isinstance(url, str) or not url.strip():
+        faltantes.append("SUPABASE_URL")
+    if not isinstance(key, str) or not key.strip():
+        faltantes.append("SUPABASE_KEY")
+    if faltantes:
+        raise ValueError(
+            "Faltan Secrets de Supabase: " + ", ".join(faltantes) +
+            ". Agrégalos en Streamlit Cloud > Settings > Secrets."
+        )
+
+    url = url.strip()
+    key = key.strip()
+    if not url.startswith(("https://", "http://")):
+        raise ValueError("SUPABASE_URL debe ser una URL http(s) válida del proyecto.")
+    return url, key
+
+
 def init_connection(url: str, key: str) -> Client:
     return create_client(url, key)
 
 
+def obtener_cliente_sesion(url: str, key: str) -> Client:
+    if "supabase_client" not in st.session_state:
+        st.session_state["supabase_client"] = init_connection(url, key)
+    return st.session_state["supabase_client"]
+
+
 @st.cache_data(ttl=30, show_spinner=False)
-def obtener_df_inventario(url: str, key: str) -> pd.DataFrame:
-    client = init_connection(url, key)
-    response = client.table("articulos").select("*").order("id").execute()
+def obtener_df_inventario(_client: Client, user_id: str) -> pd.DataFrame:
+    response = _client.table("articulos").select("*").order("id").execute()
     if not response.data:
         return pd.DataFrame(columns=COLUMNAS)
 
@@ -161,6 +212,73 @@ def mostrar_error(error: Exception) -> None:
     st.error(f"No se pudo completar la operación en Supabase: {error}")
 
 
+def mostrar_acceso(client: Client) -> None:
+    st.subheader("Accede a tu inventario")
+    tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
+
+    with tab_login:
+        with st.form("formulario_login"):
+            email = st.text_input("Correo electrónico", key="login_email")
+            password = st.text_input(
+                "Contraseña", type="password", key="login_password"
+            )
+            enviar_login = st.form_submit_button(
+                "Iniciar sesión", type="primary", use_container_width=True
+            )
+
+        if enviar_login:
+            if not email.strip() or not password:
+                st.warning("Escribe tu correo y contraseña.")
+            else:
+                try:
+                    response = client.auth.sign_in_with_password(
+                        {"email": email.strip().lower(), "password": password}
+                    )
+                    if response.session is None:
+                        st.error("Supabase no devolvió una sesión. Intenta de nuevo.")
+                    else:
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"No se pudo iniciar sesión: {exc}")
+
+    with tab_registro:
+        with st.form("formulario_registro"):
+            email_nuevo = st.text_input("Correo electrónico", key="registro_email")
+            password_nueva = st.text_input(
+                "Contraseña", type="password", key="registro_password"
+            )
+            confirmar_password = st.text_input(
+                "Confirmar contraseña", type="password", key="registro_confirmar"
+            )
+            enviar_registro = st.form_submit_button(
+                "Crear cuenta", type="primary", use_container_width=True
+            )
+
+        if enviar_registro:
+            if not email_nuevo.strip() or not password_nueva:
+                st.warning("Completa el correo y la contraseña.")
+            elif password_nueva != confirmar_password:
+                st.warning("Las contraseñas no coinciden.")
+            else:
+                try:
+                    response = client.auth.sign_up(
+                        {
+                            "email": email_nuevo.strip().lower(),
+                            "password": password_nueva,
+                        }
+                    )
+                    if response.session is None:
+                        st.success(
+                            "Cuenta creada. Revisa tu correo para confirmar la cuenta "
+                            "y después inicia sesión."
+                        )
+                    else:
+                        st.success("Cuenta creada correctamente.")
+                        st.rerun()
+                except Exception as exc:
+                    st.error(f"No se pudo crear la cuenta: {exc}")
+
+
 def main() -> None:
     st.set_page_config(
         page_title="Sistema de Inventario", page_icon="🛍️", layout="wide"
@@ -169,16 +287,45 @@ def main() -> None:
     st.caption("Gestiona tus productos sincronizados con Supabase.")
 
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        client = init_connection(url, key)
+        url, key = obtener_configuracion_supabase()
     except Exception as exc:
-        st.error(
-            "No se pudo iniciar la conexión. Configura `SUPABASE_URL` y "
-            "`SUPABASE_KEY` en los Secrets de Streamlit."
+        st.error(f"Configuración de Supabase incompleta o ilegible: {exc}")
+        st.code(
+            'SUPABASE_URL = "https://tu-proyecto.supabase.co"\n'
+            'SUPABASE_KEY = "tu-clave-anon-o-publishable"',
+            language="toml",
         )
         st.stop()
         return
+
+    try:
+        client = obtener_cliente_sesion(url, key)
+    except Exception as exc:
+        st.error(
+            "No se pudo crear el cliente de Supabase. Verifica que "
+            "SUPABASE_URL sea la URL del proyecto y que SUPABASE_KEY sea "
+            f"una clave anon/publishable válida ({type(exc).__name__})."
+        )
+        st.stop()
+        return
+
+    session = client.auth.get_session()
+    if session is None or session.user is None:
+        mostrar_acceso(client)
+        st.stop()
+        return
+
+    user_email = session.user.email or "Usuario autenticado"
+    st.sidebar.caption(f"Sesión: {user_email}")
+    if st.sidebar.button("Cerrar sesión", use_container_width=True):
+        try:
+            client.auth.sign_out()
+        except Exception as exc:
+            st.sidebar.warning(f"Se cerró la sesión localmente: {exc}")
+        finally:
+            st.session_state.pop("supabase_client", None)
+            st.cache_data.clear()
+        st.rerun()
 
     repository = InventarioRepository(client)
     st.sidebar.header("⚡ Acción rápida")
@@ -226,7 +373,7 @@ def main() -> None:
         st.success(mensaje)
 
     try:
-        df_inventario = obtener_df_inventario(url, key)
+        df_inventario = obtener_df_inventario(client, str(session.user.id))
     except Exception as exc:
         mostrar_error(exc)
         st.stop()

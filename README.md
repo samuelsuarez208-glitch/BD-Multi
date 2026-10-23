@@ -43,7 +43,22 @@ Aplicación de inventario con Streamlit y Supabase. El punto de entrada para el 
 ## Seguridad de Supabase
 
 - Usa una clave publishable o `anon`, nunca la clave `service_role` en una aplicación cliente.
-- Configura RLS y políticas en la tabla `articulos` según quién debe poder leer y modificar el inventario. La clave publishable por sí sola no autentica a cada visitante.
-- La aplicación actual no incluye inicio de sesión de usuarios. Si se despliega públicamente, cualquiera que pueda abrirla podría intentar modificar los datos permitidos por las políticas RLS. Añade autenticación antes de usarla con datos sensibles o en producción.
+- En Supabase, habilita el proveedor **Authentication > Sign In / Providers > Email**. Si está activa la confirmación de correo, el usuario deberá confirmarlo antes de iniciar sesión.
+- Activa RLS en `public.articulos` y crea una política que permita operaciones solo a usuarios autenticados. Para un inventario compartido por todas las cuentas registradas, puedes usar:
+
+	```sql
+	alter table public.articulos enable row level security;
+
+	drop policy if exists "inventory for authenticated users" on public.articulos;
+	create policy "inventory for authenticated users"
+	on public.articulos
+	for all
+	to authenticated
+	using (true)
+	with check (true);
+	```
+
+- Ese ejemplo hace que todas las cuentas registradas compartan el mismo inventario. Para inventarios privados por usuario, la tabla necesita una columna `user_id` y políticas basadas en `auth.uid()`; este código todavía no implementa esa separación.
+- Revisa y elimina políticas antiguas que concedan acceso a `anon`; la pantalla de login no sustituye las políticas RLS.
 
 La tabla `articulos` debe tener, como mínimo, las columnas `id`, `nombre`, `categoria`, `precio` y `cantidad`. El nombre debe ser único si se requiere impedir duplicados.
