@@ -93,6 +93,24 @@ class InventoryRepository:
                     ON passkeys (user_id)
                     """
                 )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS sesiones (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        token_hash BLOB NOT NULL UNIQUE,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES usuarios (id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_sesiones_token_hash
+                    ON sesiones (token_hash)
+                    """
+                )
 
     @staticmethod
     def _normalizar_email(email: str) -> str:
@@ -161,6 +179,49 @@ class InventoryRepository:
             return None
 
         return {"id": int(usuario["id"]), "email": usuario["email"]}
+
+    def crear_sesion_persistente(self, user_id: int) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).digest()
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    "INSERT INTO sesiones (user_id, token_hash) VALUES (?, ?)",
+                    (user_id, token_hash),
+                )
+        return token
+
+    def autenticar_sesion_persistente(
+        self, token: str
+    ) -> dict[str, int | str] | None:
+        if not token or len(token) > 256:
+            return None
+        token_hash = hashlib.sha256(token.encode("utf-8")).digest()
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT usuarios.id, usuarios.email
+                    FROM sesiones
+                    JOIN usuarios ON usuarios.id = sesiones.user_id
+                    WHERE sesiones.token_hash = ?
+                    """,
+                    (token_hash,),
+                )
+                user = cursor.fetchone()
+        if user is None:
+            return None
+        return {"id": int(user["id"]), "email": user["email"]}
+
+    def cerrar_sesion_persistente(self, token: str) -> None:
+        if not token:
+            return
+        token_hash = hashlib.sha256(token.encode("utf-8")).digest()
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    "DELETE FROM sesiones WHERE token_hash = ?", (token_hash,)
+                )
 
     def obtener_passkeys(self, user_id: int) -> list[dict]:
         with self._connection() as connection:

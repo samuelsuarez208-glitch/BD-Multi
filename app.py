@@ -223,6 +223,16 @@ def aplicar_estilos() -> None:
     )
 
 
+def iniciar_sesion_persistente(
+    repository: InventoryRepository, usuario: dict
+) -> None:
+    token = repository.crear_sesion_persistente(int(usuario["id"]))
+    st.session_state["usuario"] = usuario
+    st.session_state["session_token"] = token
+    st.session_state["session_storage_action"] = "store"
+    st.session_state["session_storage_token"] = token
+
+
 def mostrar_acceso(repository: InventoryRepository) -> None:
     st.markdown(
         '<div class="section-kicker">Acceso privado</div>',
@@ -260,7 +270,7 @@ def mostrar_acceso(repository: InventoryRepository) -> None:
                     if usuario is None:
                         st.error("Correo o contraseña incorrectos.")
                     else:
-                        st.session_state["usuario"] = usuario
+                        iniciar_sesion_persistente(repository, usuario)
                         st.rerun()
                 except sqlite3.Error as exc:
                     st.error(f"No se pudo iniciar sesión en la base de datos: {exc}")
@@ -291,9 +301,10 @@ def mostrar_acceso(repository: InventoryRepository) -> None:
                         st.warning(resultado["error"])
                     else:
                         try:
-                            st.session_state["usuario"] = completar_autenticacion(
+                            usuario = completar_autenticacion(
                                 repository, pending_login, resultado
                             )
+                            iniciar_sesion_persistente(repository, usuario)
                             st.rerun()
                         except Exception:
                             st.error(
@@ -322,7 +333,7 @@ def mostrar_acceso(repository: InventoryRepository) -> None:
                         usuario = repository.registrar_usuario(
                             email_nuevo, password_nueva
                         )
-                        st.session_state["usuario"] = usuario
+                        iniciar_sesion_persistente(repository, usuario)
                         st.session_state["mensaje_exito"] = "Cuenta creada correctamente."
                         st.rerun()
                     except ValueError as exc:
@@ -536,8 +547,45 @@ def main() -> None:
         st.stop()
         return
 
+    storage_action = st.session_state.get("session_storage_action")
+    if storage_action:
+        storage_result = mostrar_componente_passkey(
+            storage_action,
+            None,
+            "persistent_session_storage",
+            st.session_state.get("session_storage_token"),
+        )
+        if storage_result is None:
+            st.stop()
+        st.session_state.pop("session_storage_action", None)
+        st.session_state.pop("session_storage_token", None)
+        if storage_result.get("error"):
+            st.warning(storage_result["error"])
+        if storage_action == "clear":
+            st.rerun()
+
     usuario = st.session_state.get("usuario")
     if usuario is None:
+        restauracion = mostrar_componente_passkey(
+            "restore", None, "persistent_session_storage"
+        )
+        if restauracion and restauracion.get("token"):
+            token = restauracion["token"]
+            try:
+                usuario = repository.autenticar_sesion_persistente(token)
+            except sqlite3.Error as exc:
+                st.error(f"No se pudo restaurar la sesión: {exc}")
+                st.stop()
+                return
+            if usuario is None:
+                st.session_state["session_storage_action"] = "clear"
+                st.session_state["session_storage_token"] = None
+                st.rerun()
+            st.session_state["usuario"] = usuario
+            st.session_state["session_token"] = token
+            st.rerun()
+        if restauracion and restauracion.get("error"):
+            st.info("Este navegador no pudo guardar la sesión. Tendrás que iniciar sesión de nuevo.")
         mostrar_acceso(repository)
         st.stop()
         return
@@ -547,6 +595,14 @@ def main() -> None:
     st.caption("Resumen operativo de tus productos y existencias.")
     st.sidebar.caption(f"Sesión: {usuario['email']}")
     if st.sidebar.button("Cerrar sesión", width="stretch"):
+        session_token = st.session_state.get("session_token", "")
+        try:
+            repository.cerrar_sesion_persistente(session_token)
+        except sqlite3.Error as exc:
+            st.sidebar.error(f"No se pudo revocar la sesión persistente: {exc}")
+        st.session_state["session_storage_action"] = "clear"
+        st.session_state["session_storage_token"] = None
+        st.session_state.pop("session_token", None)
         st.session_state.pop("usuario", None)
         st.rerun()
 

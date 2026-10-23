@@ -31,6 +31,8 @@
     const button = document.getElementById("action");
     const status = document.getElementById("status");
     let currentArgs = {};
+    let lastStorageAction = "";
+    const SESSION_STORAGE_KEY = "inventory_session_v1";
 
     function sendValue(value) {
       window.parent.postMessage({
@@ -96,6 +98,25 @@
       };
     }
 
+    function manejarSesionPersistente() {
+      const { action, token } = currentArgs;
+      if (!["restore", "store", "clear"].includes(action)) return false;
+      const actionKey = `${action}:${token || ""}`;
+      if (actionKey === lastStorageAction) return true;
+      lastStorageAction = actionKey;
+
+      try {
+        if (action === "store") window.localStorage.setItem(SESSION_STORAGE_KEY, token);
+        if (action === "clear") window.localStorage.removeItem(SESSION_STORAGE_KEY);
+        sendValue({ action, token: action === "restore"
+          ? window.localStorage.getItem(SESSION_STORAGE_KEY)
+          : null });
+      } catch (error) {
+        sendValue({ action, error: "No se pudo guardar la sesión en este navegador." });
+      }
+      return true;
+    }
+
     async function iniciar() {
       button.disabled = true;
       status.textContent = "Confirma la solicitud en tu dispositivo…";
@@ -128,12 +149,16 @@
       const message = event.data;
       if (!message || message.type !== "streamlit:render") return;
       currentArgs = message.args || {};
+      const isStorageAction = manejarSesionPersistente();
+      button.hidden = isStorageAction;
+      status.hidden = isStorageAction;
+      if (isStorageAction) return;
       button.textContent = currentArgs.action === "register"
         ? "Registrar passkey en este dispositivo"
         : "Usar huella, rostro o passkey";
       status.textContent = currentArgs.action === "register"
         ? "Tu biometría nunca sale del dispositivo."
-        : "Confirma con el método de desbloqueo del dispossitivos.";
+        : "Confirma con el método de desbloqueo del dispositivo.";
     });
 
     window.parent.postMessage({

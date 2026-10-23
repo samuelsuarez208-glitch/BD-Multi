@@ -184,12 +184,20 @@ def completar_autenticacion(
 
 
 def mostrar_componente_passkey(
-    action: str, options_json: str, component_key: str
+    action: str,
+    options_json: str | None,
+    component_key: str,
+    session_token: str | None = None,
 ) -> dict | None:
     result = _component(
         action=action,
         options_json=options_json,
+        token=session_token,
         key=component_key,
         default=None,
     )
-    return result if isinstance(result, dict) else None
+    if not isinstance(result, dict):
+        return None
+    if action in {"restore", "store", "clear"} and result.get("action") != action:
+        return None
+    return result

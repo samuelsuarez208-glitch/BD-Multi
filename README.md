@@ -33,6 +33,10 @@ Las passkeys requieren un origen HTTPS válido; `http://localhost` solo se permi
 
 Si Streamlit está detrás de un proxy y no detecta correctamente la URL pública, configura `PASSKEY_APP_URL` con el origen HTTPS exacto, por ejemplo `https://inventario.ejemplo.com`. No incluyas rutas ni una barra final. En pruebas locales se permite `http://localhost:8501`.
 
+## Mantener la sesión iniciada
+
+La app recuerda el acceso en el mismo navegador/dispositivo hasta que el usuario elija **Cerrar sesión**. El navegador conserva un token aleatorio; la base de datos conserva únicamente el hash y lo revoca al cerrar sesión. No se guarda la contraseña ni información biométrica en el navegador. Si se borran sus datos, se cambia de navegador o se usa otro teléfono, habrá que iniciar sesión nuevamente.
+
 ## Despliegue
 
 Puedes desplegarla en Streamlit Community Cloud desde GitHub, seleccionando `app.py` como archivo principal. No requiere Secrets ni credenciales de servicios externos.
