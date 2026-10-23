@@ -1,4 +1,5 @@
 import os
+import secrets
 import sqlite3
 from pathlib import Path
 
@@ -6,6 +7,14 @@ import pandas as pd
 import streamlit as st
 
 from database import CATEGORIAS, InventoryRepository
+from passkeys import (
+    completar_autenticacion,
+    completar_registro,
+    crear_opciones_autenticacion,
+    crear_opciones_registro,
+    mostrar_componente_passkey,
+    obtener_url_app,
+)
 
 
 DB_PATH = Path(
@@ -241,6 +250,9 @@ def mostrar_acceso(repository: InventoryRepository) -> None:
                 enviar_login = st.form_submit_button(
                     "Iniciar sesión", type="primary", width="stretch"
                 )
+                preparar_passkey = st.form_submit_button(
+                    "Preparar inicio biométrico", width="stretch"
+                )
 
             if enviar_login:
                 try:
@@ -252,6 +264,42 @@ def mostrar_acceso(repository: InventoryRepository) -> None:
                         st.rerun()
                 except sqlite3.Error as exc:
                     st.error(f"No se pudo iniciar sesión en la base de datos: {exc}")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            if preparar_passkey:
+                try:
+                    cuenta = repository.obtener_usuario_y_passkeys(email)
+                    pending = crear_opciones_autenticacion(cuenta, obtener_url_app())
+                    pending["nonce"] = secrets.token_urlsafe(12)
+                    st.session_state["pending_passkey_login"] = pending
+                except ValueError as exc:
+                    st.error(str(exc))
+                except sqlite3.Error as exc:
+                    st.error(f"No se pudo preparar la passkey: {exc}")
+
+            pending_login = st.session_state.get("pending_passkey_login")
+            if pending_login:
+                st.caption("Confirma el acceso en el aviso de tu dispositivo.")
+                resultado = mostrar_componente_passkey(
+                    "authenticate",
+                    pending_login["options_json"],
+                    f"login_passkey_{pending_login['nonce']}",
+                )
+                if resultado is not None:
+                    st.session_state.pop("pending_passkey_login", None)
+                    if resultado.get("error"):
+                        st.warning(resultado["error"])
+                    else:
+                        try:
+                            st.session_state["usuario"] = completar_autenticacion(
+                                repository, pending_login, resultado
+                            )
+                            st.rerun()
+                        except Exception:
+                            st.error(
+                                "No se pudo verificar la passkey. Intenta de nuevo "
+                                "o usa tu contraseña."
+                            )
 
         with tab_registro:
             with st.form("formulario_registro"):
@@ -324,6 +372,66 @@ def mostrar_accion_rapida(repository: InventoryRepository, user_id: int) -> None
         st.sidebar.error(str(exc))
     except sqlite3.Error as exc:
         st.sidebar.error(f"Error de SQLite: {exc}")
+
+
+def mostrar_acceso_biometrico(
+    repository: InventoryRepository, usuario: dict
+) -> None:
+    user_id = int(usuario["id"])
+    pending_key = "pending_passkey_registration"
+    pending = st.session_state.get(pending_key)
+    expanded = bool(pending and pending["user_id"] == user_id)
+
+    with st.expander("Acceso biométrico", expanded=expanded):
+        try:
+            passkeys = repository.obtener_passkeys(user_id)
+        except sqlite3.Error as exc:
+            st.error(f"No se pudieron consultar tus passkeys: {exc}")
+            return
+
+        st.caption(
+            f"{len(passkeys)} passkey{'s' if len(passkeys) != 1 else ''} registrada(s). "
+            "La huella o el rostro permanecen en el dispositivo."
+        )
+        registrar = st.button(
+            "Añadir passkey a este dispositivo",
+            width="stretch",
+            key=f"agregar_passkey_{user_id}",
+        )
+        if registrar:
+            try:
+                pending = crear_opciones_registro(usuario, obtener_url_app())
+                pending["nonce"] = secrets.token_urlsafe(12)
+                st.session_state[pending_key] = pending
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+
+        pending = st.session_state.get(pending_key)
+        if not pending or pending["user_id"] != user_id:
+            return
+
+        st.caption("Toca el botón y confirma con el método de desbloqueo del móvil.")
+        resultado = mostrar_componente_passkey(
+            "register",
+            pending["options_json"],
+            f"register_passkey_{pending['nonce']}",
+        )
+        if resultado is None:
+            return
+
+        st.session_state.pop(pending_key, None)
+        if resultado.get("error"):
+            st.warning(resultado["error"])
+            return
+        try:
+            completar_registro(repository, pending, resultado)
+            st.session_state["mensaje_exito"] = "Passkey registrada en este dispositivo."
+            st.rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+        except Exception:
+            st.error("No se pudo verificar la passkey. Vuelve a intentarlo.")
 
 
 def mostrar_inventario(repository: InventoryRepository, user_id: int) -> None:
@@ -443,6 +551,7 @@ def main() -> None:
         st.rerun()
 
     mostrar_accion_rapida(repository, user_id)
+    mostrar_acceso_biometrico(repository, usuario)
     if mensaje := st.session_state.pop("mensaje_exito", None):
         st.success(mensaje)
     mostrar_inventario(repository, user_id)

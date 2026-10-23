@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import math
 import re
 import secrets
@@ -71,6 +72,27 @@ class InventoryRepository:
                     ON articulos (user_id, nombre)
                     """
                 )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS passkeys (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        credential_id BLOB NOT NULL UNIQUE,
+                        public_key BLOB NOT NULL,
+                        sign_count INTEGER NOT NULL DEFAULT 0,
+                        transports TEXT NOT NULL DEFAULT '[]',
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES usuarios (id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_passkeys_usuario
+                    ON passkeys (user_id)
+                    """
+                )
 
     @staticmethod
     def _normalizar_email(email: str) -> str:
@@ -139,6 +161,143 @@ class InventoryRepository:
             return None
 
         return {"id": int(usuario["id"]), "email": usuario["email"]}
+
+    def obtener_passkeys(self, user_id: int) -> list[dict]:
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT credential_id, public_key, sign_count, transports
+                    FROM passkeys
+                    WHERE user_id = ?
+                    ORDER BY id
+                    """,
+                    (user_id,),
+                )
+                rows = cursor.fetchall()
+
+        return [
+            {
+                "credential_id": bytes(row["credential_id"]),
+                "public_key": bytes(row["public_key"]),
+                "sign_count": int(row["sign_count"]),
+                "transports": json.loads(row["transports"]),
+            }
+            for row in rows
+        ]
+
+    def obtener_passkey_por_email(
+        self, email: str, credential_id: bytes
+    ) -> dict | None:
+        try:
+            email_normalizado = self._normalizar_email(email)
+        except ValueError:
+            return None
+
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT usuarios.id AS user_id, usuarios.email,
+                           passkeys.credential_id, passkeys.public_key,
+                           passkeys.sign_count
+                    FROM usuarios
+                    JOIN passkeys ON passkeys.user_id = usuarios.id
+                    WHERE usuarios.email = ? AND passkeys.credential_id = ?
+                    """,
+                    (email_normalizado, credential_id),
+                )
+                row = cursor.fetchone()
+
+        if row is None:
+            return None
+        return {
+            "user_id": int(row["user_id"]),
+            "email": row["email"],
+            "credential_id": bytes(row["credential_id"]),
+            "public_key": bytes(row["public_key"]),
+            "sign_count": int(row["sign_count"]),
+        }
+
+    def obtener_usuario_y_passkeys(self, email: str) -> dict | None:
+        try:
+            email_normalizado = self._normalizar_email(email)
+        except ValueError:
+            return None
+
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    SELECT usuarios.id AS user_id, usuarios.email,
+                           passkeys.credential_id, passkeys.transports
+                    FROM usuarios
+                    LEFT JOIN passkeys ON passkeys.user_id = usuarios.id
+                    WHERE usuarios.email = ?
+                    ORDER BY passkeys.id
+                    """,
+                    (email_normalizado,),
+                )
+                rows = cursor.fetchall()
+
+        if not rows:
+            return None
+        return {
+            "user_id": int(rows[0]["user_id"]),
+            "email": rows[0]["email"],
+            "passkeys": [
+                {
+                    "credential_id": bytes(row["credential_id"]),
+                    "transports": json.loads(row["transports"]),
+                }
+                for row in rows
+                if row["credential_id"] is not None
+            ],
+        }
+
+    def guardar_passkey(
+        self,
+        user_id: int,
+        credential_id: bytes,
+        public_key: bytes,
+        sign_count: int,
+        transports: list[str],
+    ) -> None:
+        try:
+            with self._connection() as connection:
+                with closing(connection.cursor()) as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO passkeys
+                            (user_id, credential_id, public_key, sign_count, transports)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            user_id,
+                            credential_id,
+                            public_key,
+                            sign_count,
+                            json.dumps(transports),
+                        ),
+                    )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Esta passkey ya está registrada en una cuenta.") from exc
+
+    def actualizar_contador_passkey(
+        self, user_id: int, credential_id: bytes, sign_count: int
+    ) -> None:
+        with self._connection() as connection:
+            with closing(connection.cursor()) as cursor:
+                cursor.execute(
+                    """
+                    UPDATE passkeys
+                    SET sign_count = ?
+                    WHERE user_id = ? AND credential_id = ?
+                    """,
+                    (sign_count, user_id, credential_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError("La passkey no está registrada en esta cuenta.")
 
     def obtener_inventario(self, user_id: int) -> pd.DataFrame:
         with self._connection() as connection:

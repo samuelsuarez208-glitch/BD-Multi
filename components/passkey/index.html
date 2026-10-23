@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; color: #25342d; background: transparent; }
+    .panel { display: grid; gap: 8px; }
+    button {
+      width: 100%; min-height: 44px; padding: 10px 16px;
+      border: 1px solid #286653; border-radius: 5px;
+      background: #286653; color: #fff; font: 600 14px system-ui, sans-serif;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .65; cursor: wait; }
+    #status { min-height: 18px; color: #68766e; font-size: 13px; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #e7eee9; }
+      button { color: #12251d; background: #77b69b; border-color: #77b69b; }
+      #status { color: #a3b1a9; }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <button id="action" type="button">Continuar con passkey</button>
+    <div id="status" role="status" aria-live="polite"></div>
+  </div>
+  <script>
+    const button = document.getElementById("action");
+    const status = document.getElementById("status");
+    let currentArgs = {};
+
+    function sendValue(value) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value,
+        dataType: "json"
+      }, "*");
+    }
+
+    function decodeBase64Url(value) {
+      const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
+      const binary = window.atob(padded);
+      return Uint8Array.from(binary, character => character.charCodeAt(0)).buffer;
+    }
+
+    function encodeBase64Url(value) {
+      const bytes = new Uint8Array(value);
+      let binary = "";
+      bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+      return window.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    }
+
+    function prepararOpciones(options, mode) {
+      options.challenge = decodeBase64Url(options.challenge);
+      if (mode === "register") {
+        options.user.id = decodeBase64Url(options.user.id);
+        (options.excludeCredentials || []).forEach(item => {
+          item.id = decodeBase64Url(item.id);
+        });
+      } else {
+        (options.allowCredentials || []).forEach(item => {
+          item.id = decodeBase64Url(item.id);
+        });
+      }
+      return options;
+    }
+
+    function serializarCredencial(credential, mode) {
+      const response = {
+        clientDataJSON: encodeBase64Url(credential.response.clientDataJSON)
+      };
+      if (mode === "register") {
+        response.attestationObject = encodeBase64Url(credential.response.attestationObject);
+        if (typeof credential.response.getTransports === "function") {
+          response.transports = credential.response.getTransports();
+        }
+      } else {
+        response.authenticatorData = encodeBase64Url(credential.response.authenticatorData);
+        response.signature = encodeBase64Url(credential.response.signature);
+        response.userHandle = credential.response.userHandle
+          ? encodeBase64Url(credential.response.userHandle)
+          : null;
+      }
+      return {
+        id: credential.id,
+        rawId: encodeBase64Url(credential.rawId),
+        type: credential.type,
+        response,
+        clientExtensionResults: credential.getClientExtensionResults(),
+        authenticatorAttachment: credential.authenticatorAttachment
+      };
+    }
+
+    async function iniciar() {
+      button.disabled = true;
+      status.textContent = "Confirma la solicitud en tu dispositivo…";
+      try {
+        if (!window.isSecureContext || !navigator.credentials) {
+          throw new Error("Passkeys requiere HTTPS o localhost y un navegador compatible.");
+        }
+        const options = prepararOpciones(
+          JSON.parse(currentArgs.options_json), currentArgs.action
+        );
+        const credential = currentArgs.action === "register"
+          ? await navigator.credentials.create({ publicKey: options })
+          : await navigator.credentials.get({ publicKey: options });
+        if (!credential) throw new Error("No se recibió una credencial del dispositivo.");
+        sendValue({ credential: serializarCredencial(credential, currentArgs.action) });
+        status.textContent = "Verificando passkey…";
+      } catch (error) {
+        const message = error && error.name === "NotAllowedError"
+          ? "Solicitud cancelada o agotada. Puedes volver a intentarlo."
+          : (error.message || "No se pudo usar la passkey.");
+        status.textContent = message;
+        sendValue({ error: message });
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    button.addEventListener("click", iniciar);
+    window.addEventListener("message", event => {
+      const message = event.data;
+      if (!message || message.type !== "streamlit:render") return;
+      currentArgs = message.args || {};
+      button.textContent = currentArgs.action === "register"
+        ? "Registrar passkey en este dispositivo"
+        : "Usar huella, rostro o passkey";
+      status.textContent = currentArgs.action === "register"
+        ? "Tu biometría nunca sale del dispositivo."
+        : "Confirma con el método de desbloqueo del dispossitivos.";
+    });
+
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:componentReady",
+      apiVersion: 1
+    }, "*");
+    window.parent.postMessage({
+      isStreamlitMessage: true,
+      type: "streamlit:setFrameHeight",
+      height: 76
+    }, "*");
+  </script>
+</body>
+</html>
