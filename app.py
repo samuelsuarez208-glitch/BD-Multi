@@ -25,6 +25,7 @@ def aplicar_estilos() -> None:
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
 
         :root {
+            color-scheme: light dark;
             --ink: #202a26;
             --muted: #707b74;
             --paper: #f3f4ef;
@@ -140,8 +141,65 @@ def aplicar_estilos() -> None:
         }
         [data-testid="stTextInput"] input,
         [data-testid="stNumberInput"] input {
-            background: #fff;
+            background: var(--surface);
             border-color: var(--line);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                color-scheme: dark;
+                --ink: #e7eee9;
+                --muted: #a3b1a9;
+                --paper: #121a16;
+                --surface: #1b2620;
+                --line: #35443b;
+                --jade: #77b69b;
+                --jade-dark: #101d18;
+                --copper: #e29a76;
+            }
+            [data-testid="stSidebar"] {
+                border-right-color: #2d4036;
+            }
+            [data-testid="stSidebar"] * { color: #e6eee9; }
+            [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+                color: #a9c1b4;
+            }
+            [data-testid="stSidebar"] hr { border-color: #344d40; }
+            [data-testid="stForm"],
+            [data-testid="stMetric"],
+            [data-testid="stDataEditor"] {
+                background: var(--surface);
+                border-color: var(--line);
+            }
+            [data-testid="stTextInput"] input,
+            [data-testid="stNumberInput"] input,
+            [data-baseweb="select"] > div,
+            [data-baseweb="input"] {
+                color: var(--ink);
+                background: var(--surface);
+                border-color: var(--line);
+            }
+            [data-baseweb="popover"] [role="listbox"],
+            [data-baseweb="menu"] {
+                color: var(--ink);
+                background: var(--surface);
+            }
+            [data-testid="stButton"] button:not([kind="primary"]),
+            [data-testid="stFormSubmitButton"] button:not([kind="primary"]) {
+                color: var(--ink);
+                background: var(--surface);
+                border-color: var(--line);
+            }
+            [data-testid="stButton"] button[kind="primary"],
+            [data-testid="stFormSubmitButton"] button[kind="primary"] {
+                color: #12251d;
+                background: var(--jade);
+                border-color: var(--jade);
+            }
+            [data-baseweb="tab"] { color: var(--muted); }
+            [data-testid="stMarkdownContainer"],
+            [data-testid="stWidgetLabel"] p {
+                color: var(--ink);
+            }
         }
         @media (max-width: 760px) {
             [data-testid="stMainBlockContainer"] {
