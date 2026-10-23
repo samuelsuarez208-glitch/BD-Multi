@@ -1,218 +1,24 @@
-import math
 import os
-from collections.abc import Mapping
+import sqlite3
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-from supabase import Client, create_client
+
+from database import CATEGORIAS, InventoryRepository
 
 
-CATEGORIAS = ["Comida", "Ropa", "Electrodomésticos", "Otros"]
-COLUMNAS = ["id", "nombre", "categoria", "precio", "cantidad"]
+DB_PATH = Path(
+    os.environ.get("INVENTORY_DB_PATH", Path(__file__).with_name("inventory.db"))
+)
 
 
-def obtener_configuracion_supabase(
-    secrets: Mapping | None = None, environ: Mapping | None = None
-) -> tuple[str, str]:
-    if secrets is None:
-        secrets = st.secrets
-    if environ is None:
-        environ = os.environ
-
-    nested = secrets.get("supabase", {})
-    if not isinstance(nested, Mapping):
-        nested = {}
-
-    url = (
-        secrets.get("SUPABASE_URL")
-        or nested.get("url")
-        or environ.get("SUPABASE_URL")
-    )
-    key = (
-        secrets.get("SUPABASE_KEY")
-        or secrets.get("SUPABASE_ANON_KEY")
-        or secrets.get("SUPABASE_PUBLISHABLE_KEY")
-        or nested.get("key")
-        or nested.get("anon_key")
-        or environ.get("SUPABASE_KEY")
-        or environ.get("SUPABASE_ANON_KEY")
-    )
-
-    faltantes = []
-    if not isinstance(url, str) or not url.strip():
-        faltantes.append("SUPABASE_URL")
-    if not isinstance(key, str) or not key.strip():
-        faltantes.append("SUPABASE_KEY")
-    if faltantes:
-        raise ValueError(
-            "Faltan Secrets de Supabase: " + ", ".join(faltantes) +
-            ". Agrégalos en Streamlit Cloud > Settings > Secrets."
-        )
-
-    url = url.strip()
-    key = key.strip()
-    if not url.startswith(("https://", "http://")):
-        raise ValueError("SUPABASE_URL debe ser una URL http(s) válida del proyecto.")
-    return url, key
+@st.cache_resource
+def obtener_repositorio(db_path: str) -> InventoryRepository:
+    return InventoryRepository(db_path)
 
 
-def init_connection(url: str, key: str) -> Client:
-    return create_client(url, key)
-
-
-def obtener_cliente_sesion(url: str, key: str) -> Client:
-    if "supabase_client" not in st.session_state:
-        st.session_state["supabase_client"] = init_connection(url, key)
-    return st.session_state["supabase_client"]
-
-
-@st.cache_data(ttl=30, show_spinner=False)
-def obtener_df_inventario(_client: Client, user_id: str) -> pd.DataFrame:
-    response = _client.table("articulos").select("*").order("id").execute()
-    if not response.data:
-        return pd.DataFrame(columns=COLUMNAS)
-
-    df = pd.DataFrame(response.data)
-    for columna in COLUMNAS:
-        if columna not in df.columns:
-            df[columna] = None
-    df = df[COLUMNAS]
-    df["nombre"] = df["nombre"].fillna("").astype(str).str.capitalize()
-    df["precio"] = pd.to_numeric(df["precio"], errors="coerce").fillna(0.0)
-    df["cantidad"] = pd.to_numeric(df["cantidad"], errors="coerce").fillna(0).astype(int)
-    return df
-
-
-class InventarioRepository:
-    def __init__(self, client: Client) -> None:
-        self.client = client
-
-    def agregar_o_incrementar(
-        self, nombre: str, categoria: str, precio: float, cantidad: int
-    ) -> None:
-        nombre_norm = nombre.strip().lower()
-        response = (
-            self.client.table("articulos")
-            .select("id,cantidad")
-            .eq("nombre", nombre_norm)
-            .limit(1)
-            .execute()
-        )
-        if response.data:
-            articulo = response.data[0]
-            self.client.table("articulos").update(
-                {
-                    "cantidad": int(articulo["cantidad"]) + cantidad,
-                    "precio": precio,
-                    "categoria": categoria,
-                }
-            ).eq("id", articulo["id"]).execute()
-            return
-
-        self.client.table("articulos").insert(
-            {
-                "nombre": nombre_norm,
-                "categoria": categoria,
-                "precio": precio,
-                "cantidad": cantidad,
-            }
-        ).execute()
-
-    def retirar_stock(self, nombre: str, cantidad: int) -> int:
-        nombre_norm = nombre.strip().lower()
-        response = (
-            self.client.table("articulos")
-            .select("id,cantidad")
-            .eq("nombre", nombre_norm)
-            .limit(1)
-            .execute()
-        )
-        if not response.data:
-            raise LookupError(f"'{nombre}' no existe.")
-
-        articulo = response.data[0]
-        stock_actual = int(articulo["cantidad"])
-        if stock_actual < cantidad:
-            raise ValueError(f"Solo quedan {stock_actual} unidades.")
-
-        self.client.table("articulos").update(
-            {"cantidad": stock_actual - cantidad}
-        ).eq("id", articulo["id"]).execute()
-        return stock_actual - cantidad
-
-    def sincronizar_cambios(
-        self, df_editado: pd.DataFrame, df_visible_original: pd.DataFrame
-    ) -> None:
-        ids_visibles = {
-            int(value)
-            for value in df_visible_original["id"].dropna()
-        }
-        filas_actuales = []
-        ids_editados = set()
-
-        for _, fila in df_editado.iterrows():
-            nombre_value = fila.get("nombre")
-            nombre = (
-                ""
-                if pd.isna(nombre_value)
-                else str(nombre_value).strip().lower()
-            )
-            if not nombre:
-                raise ValueError("Todos los productos deben tener un nombre.")
-
-            categoria = fila.get("categoria")
-            if pd.isna(categoria) or categoria not in CATEGORIAS:
-                raise ValueError(f"Categoría no válida para '{nombre}'.")
-
-            try:
-                precio = float(fila.get("precio"))
-                cantidad_num = float(fila.get("cantidad"))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"Precio o cantidad no válidos para '{nombre}'.") from exc
-
-            if not math.isfinite(precio) or precio < 0:
-                raise ValueError(f"El precio de '{nombre}' debe ser un número no negativo.")
-            if (
-                not math.isfinite(cantidad_num)
-                or cantidad_num < 0
-                or not cantidad_num.is_integer()
-            ):
-                raise ValueError(f"La cantidad de '{nombre}' debe ser un entero no negativo.")
-
-            datos = {
-                "nombre": nombre,
-                "categoria": categoria,
-                "precio": precio,
-                "cantidad": int(cantidad_num),
-            }
-            id_value = fila.get("id")
-            if pd.notna(id_value) and int(id_value) in ids_visibles:
-                articulo_id = int(id_value)
-                if articulo_id in ids_editados:
-                    raise ValueError("Hay IDs duplicados en la tabla editada.")
-                ids_editados.add(articulo_id)
-                datos["id"] = articulo_id
-            filas_actuales.append(datos)
-
-        ids_a_eliminar = ids_visibles - ids_editados
-        if ids_a_eliminar:
-            self.client.table("articulos").delete().in_("id", list(ids_a_eliminar)).execute()
-
-        actualizaciones = [fila for fila in filas_actuales if "id" in fila]
-        inserciones = [fila for fila in filas_actuales if "id" not in fila]
-        if actualizaciones:
-            self.client.table("articulos").upsert(
-                actualizaciones, on_conflict="id"
-            ).execute()
-        if inserciones:
-            self.client.table("articulos").insert(inserciones).execute()
-
-
-def mostrar_error(error: Exception) -> None:
-    st.error(f"No se pudo completar la operación en Supabase: {error}")
-
-
-def mostrar_acceso(client: Client) -> None:
+def mostrar_acceso(repository: InventoryRepository) -> None:
     st.subheader("Accede a tu inventario")
     tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
 
@@ -227,19 +33,15 @@ def mostrar_acceso(client: Client) -> None:
             )
 
         if enviar_login:
-            if not email.strip() or not password:
-                st.warning("Escribe tu correo y contraseña.")
-            else:
-                try:
-                    response = client.auth.sign_in_with_password(
-                        {"email": email.strip().lower(), "password": password}
-                    )
-                    if response.session is None:
-                        st.error("Supabase no devolvió una sesión. Intenta de nuevo.")
-                    else:
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"No se pudo iniciar sesión: {exc}")
+            try:
+                usuario = repository.autenticar_usuario(email, password)
+                if usuario is None:
+                    st.error("Correo o contraseña incorrectos.")
+                else:
+                    st.session_state["usuario"] = usuario
+                    st.rerun()
+            except sqlite3.Error as exc:
+                st.error(f"No se pudo iniciar sesión en la base de datos: {exc}")
 
     with tab_registro:
         with st.form("formulario_registro"):
@@ -255,132 +57,75 @@ def mostrar_acceso(client: Client) -> None:
             )
 
         if enviar_registro:
-            if not email_nuevo.strip() or not password_nueva:
-                st.warning("Completa el correo y la contraseña.")
-            elif password_nueva != confirmar_password:
+            if password_nueva != confirmar_password:
                 st.warning("Las contraseñas no coinciden.")
             else:
                 try:
-                    response = client.auth.sign_up(
-                        {
-                            "email": email_nuevo.strip().lower(),
-                            "password": password_nueva,
-                        }
+                    usuario = repository.registrar_usuario(
+                        email_nuevo, password_nueva
                     )
-                    if response.session is None:
-                        st.success(
-                            "Cuenta creada. Revisa tu correo para confirmar la cuenta "
-                            "y después inicia sesión."
-                        )
-                    else:
-                        st.success("Cuenta creada correctamente.")
-                        st.rerun()
-                except Exception as exc:
+                    st.session_state["usuario"] = usuario
+                    st.session_state["mensaje_exito"] = "Cuenta creada correctamente."
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+                except sqlite3.Error as exc:
                     st.error(f"No se pudo crear la cuenta: {exc}")
 
 
-def main() -> None:
-    st.set_page_config(
-        page_title="Sistema de Inventario", page_icon="🛍️", layout="wide"
-    )
-    st.title("🛍️ Control de Inventario Multicategoría")
-    st.caption("Gestiona tus productos sincronizados con Supabase.")
-
-    try:
-        url, key = obtener_configuracion_supabase()
-    except Exception as exc:
-        st.error(f"Configuración de Supabase incompleta o ilegible: {exc}")
-        st.code(
-            'SUPABASE_URL = "https://tu-proyecto.supabase.co"\n'
-            'SUPABASE_KEY = "tu-clave-anon-o-publishable"',
-            language="toml",
-        )
-        st.stop()
-        return
-
-    try:
-        client = obtener_cliente_sesion(url, key)
-    except Exception as exc:
-        st.error(
-            "No se pudo crear el cliente de Supabase. Verifica que "
-            "SUPABASE_URL sea la URL del proyecto y que SUPABASE_KEY sea "
-            f"una clave anon/publishable válida ({type(exc).__name__})."
-        )
-        st.stop()
-        return
-
-    session = client.auth.get_session()
-    if session is None or session.user is None:
-        mostrar_acceso(client)
-        st.stop()
-        return
-
-    user_email = session.user.email or "Usuario autenticado"
-    st.sidebar.caption(f"Sesión: {user_email}")
-    if st.sidebar.button("Cerrar sesión", use_container_width=True):
-        try:
-            client.auth.sign_out()
-        except Exception as exc:
-            st.sidebar.warning(f"Se cerró la sesión localmente: {exc}")
-        finally:
-            st.session_state.pop("supabase_client", None)
-            st.cache_data.clear()
-        st.rerun()
-
-    repository = InventarioRepository(client)
+def mostrar_accion_rapida(repository: InventoryRepository, user_id: int) -> None:
     st.sidebar.header("⚡ Acción rápida")
-    opcion = st.sidebar.radio("Operación:", ["Agregar / Incrementar", "Retirar stock"])
-    nombre_in = st.sidebar.text_input("Nombre del producto:")
-    categoria_in = st.sidebar.selectbox("Categoría:", CATEGORIAS)
-    precio_in = st.sidebar.number_input(
+    opcion = st.sidebar.radio(
+        "Operación:", ["Agregar / Incrementar", "Retirar stock"]
+    )
+    nombre = st.sidebar.text_input("Nombre del producto:")
+    categoria = st.sidebar.selectbox("Categoría:", CATEGORIAS)
+    precio = st.sidebar.number_input(
         "Precio ($):", min_value=0.0, step=0.5, format="%.2f"
     )
-    cantidad_in = st.sidebar.number_input(
-        "Cantidad:", min_value=1, step=1, value=1
-    )
+    cantidad = st.sidebar.number_input("Cantidad:", min_value=1, step=1, value=1)
 
     if opcion == "Agregar / Incrementar":
-        if st.sidebar.button("➕ Guardar producto", use_container_width=True):
-            if not nombre_in.strip():
-                st.sidebar.warning("Escribe un nombre.")
-            else:
-                try:
-                    repository.agregar_o_incrementar(
-                        nombre_in, categoria_in, precio_in, cantidad_in
-                    )
-                    st.session_state["mensaje_exito"] = f"'{nombre_in.strip()}' actualizado."
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as exc:
-                    st.sidebar.error(f"No se pudo guardar el producto: {exc}")
-    elif st.sidebar.button("➖ Retirar unidades", use_container_width=True):
-        if not nombre_in.strip():
-            st.sidebar.warning("Escribe un nombre.")
-        else:
-            try:
-                repository.retirar_stock(nombre_in, cantidad_in)
-                st.session_state["mensaje_exito"] = f"Retiradas {cantidad_in} unidades."
-                st.cache_data.clear()
-                st.rerun()
-            except LookupError as exc:
-                st.sidebar.error(str(exc))
-            except ValueError as exc:
-                st.sidebar.error(str(exc))
-            except Exception as exc:
-                st.sidebar.error(f"No se pudo retirar el stock: {exc}")
+        accion = st.sidebar.button("➕ Guardar producto", use_container_width=True)
+    else:
+        accion = st.sidebar.button("➖ Retirar unidades", use_container_width=True)
 
-    if mensaje := st.session_state.pop("mensaje_exito", None):
-        st.success(mensaje)
-
-    try:
-        df_inventario = obtener_df_inventario(client, str(session.user.id))
-    except Exception as exc:
-        mostrar_error(exc)
-        st.stop()
+    if not accion:
+        return
+    if not nombre.strip():
+        st.sidebar.warning("Escribe un nombre.")
         return
 
-    metrica_1, metrica_2, metrica_3, metrica_4 = st.columns(4)
-    total_stock = int(df_inventario["cantidad"].sum()) if not df_inventario.empty else 0
+    try:
+        if opcion == "Agregar / Incrementar":
+            repository.agregar_o_incrementar(
+                user_id, nombre, categoria, precio, int(cantidad)
+            )
+            mensaje = f"'{nombre.strip()}' actualizado."
+        else:
+            repository.retirar_stock(user_id, nombre, int(cantidad))
+            mensaje = f"Retiradas {cantidad} unidades."
+        st.session_state["mensaje_exito"] = mensaje
+        st.rerun()
+    except LookupError as exc:
+        st.sidebar.error(str(exc))
+    except ValueError as exc:
+        st.sidebar.error(str(exc))
+    except sqlite3.Error as exc:
+        st.sidebar.error(f"Error de SQLite: {exc}")
+
+
+def mostrar_inventario(repository: InventoryRepository, user_id: int) -> None:
+    try:
+        df_inventario = repository.obtener_inventario(user_id)
+    except sqlite3.Error as exc:
+        st.error(f"No se pudo leer el inventario: {exc}")
+        return
+
+    metricas = st.columns(4)
+    total_stock = (
+        int(df_inventario["cantidad"].sum()) if not df_inventario.empty else 0
+    )
     valor_inventario = (
         (df_inventario["precio"] * df_inventario["cantidad"]).sum()
         if not df_inventario.empty
@@ -389,10 +134,10 @@ def main() -> None:
     categorias = df_inventario["categoria"].dropna()
     categoria_principal = categorias.mode().iloc[0] if not categorias.empty else "N/A"
 
-    metrica_1.metric("📦 Productos distintos", len(df_inventario))
-    metrica_2.metric("📊 Stock total", total_stock)
-    metrica_3.metric("💰 Valor del inventario", f"${valor_inventario:,.2f}")
-    metrica_4.metric("🏷️ Categoría principal", categoria_principal)
+    metricas[0].metric("📦 Productos distintos", len(df_inventario))
+    metricas[1].metric("📊 Stock total", total_stock)
+    metricas[2].metric("💰 Valor del inventario", f"${valor_inventario:,.2f}")
+    metricas[3].metric("🏷️ Categoría principal", categoria_principal)
     st.divider()
 
     col_busqueda, col_filtro = st.columns([2, 1])
@@ -433,7 +178,7 @@ def main() -> None:
             ),
         },
         hide_index=True,
-        key="editor_tabla",
+        key=f"editor_{user_id}_{categoria_filtro}_{busqueda.strip().lower()}",
     )
 
     col_guardar, _ = st.columns([1, 3])
@@ -442,14 +187,47 @@ def main() -> None:
             "💾 Guardar cambios", type="primary", use_container_width=True
         ):
             try:
-                repository.sincronizar_cambios(df_editado, df_filtrado)
+                repository.sincronizar_cambios(
+                    user_id, df_editado, df_filtrado
+                )
                 st.session_state["mensaje_exito"] = "Inventario actualizado correctamente."
-                st.cache_data.clear()
                 st.rerun()
             except ValueError as exc:
                 st.error(str(exc))
-            except Exception as exc:
-                mostrar_error(exc)
+            except sqlite3.Error as exc:
+                st.error(f"No se pudo guardar el inventario: {exc}")
+
+
+def main() -> None:
+    st.set_page_config(
+        page_title="Sistema de Inventario", page_icon="🛍️", layout="wide"
+    )
+    st.title("🛍️ Control de Inventario Multicategoría")
+    st.caption("Inventario local con cuentas independientes.")
+
+    try:
+        repository = obtener_repositorio(str(DB_PATH))
+    except sqlite3.Error as exc:
+        st.error(f"No se pudo iniciar la base SQLite: {exc}")
+        st.stop()
+        return
+
+    usuario = st.session_state.get("usuario")
+    if usuario is None:
+        mostrar_acceso(repository)
+        st.stop()
+        return
+
+    user_id = int(usuario["id"])
+    st.sidebar.caption(f"Sesión: {usuario['email']}")
+    if st.sidebar.button("Cerrar sesión", use_container_width=True):
+        st.session_state.pop("usuario", None)
+        st.rerun()
+
+    mostrar_accion_rapida(repository, user_id)
+    if mensaje := st.session_state.pop("mensaje_exito", None):
+        st.success(mensaje)
+    mostrar_inventario(repository, user_id)
 
 
 if __name__ == "__main__":

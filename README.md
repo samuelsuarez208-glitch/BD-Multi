@@ -1,6 +1,6 @@
 # Sistema de inventario
 
-Aplicación de inventario con Streamlit y Supabase. El punto de entrada para el despliegue es `app.py`.
+Aplicación de inventario con Streamlit y SQLite. El punto de entrada es `app.py`; el acceso a datos está separado en `database.py`.
 
 ## Ejecución local
 
@@ -13,52 +13,18 @@ Aplicación de inventario con Streamlit y Supabase. El punto de entrada para el 
 	python -m pip install -r requirements.txt
 	```
 
-3. Crea `.streamlit/secrets.toml` con las credenciales de tu proyecto:
-
-	```toml
-	SUPABASE_URL = "https://tu-proyecto.supabase.co"
-	SUPABASE_KEY = "tu-clave-publishable-o-anon"
-	```
-
-4. Inicia la aplicación:
+3. Inicia la aplicación:
 
 	```bash
 	streamlit run app.py
 	```
 
-## Despliegue en Streamlit Community Cloud
+La base `inventory.db` se crea junto a `app.py`. Para guardarla en otra ubicación, define `INVENTORY_DB_PATH` antes de iniciar Streamlit. Las cuentas tienen inventarios separados. Las contraseñas se almacenan como hashes PBKDF2 con salt aleatorio, no como texto plano.
 
-1. Sube este proyecto a un repositorio de GitHub. No subas `.streamlit/secrets.toml` ni claves de Supabase.
-2. En [share.streamlit.io](https://share.streamlit.io/), inicia sesión y elige **Create app**.
-3. Selecciona el repositorio, la rama que quieras desplegar y `app.py` como **Main file path**.
-4. En **Advanced settings**, agrega los Secrets con formato TOML:
+## Despliegue
 
-	```toml
-	SUPABASE_URL = "https://tu-proyecto.supabase.co"
-	SUPABASE_KEY = "tu-clave-publishable-o-anon"
-	```
+Puedes desplegarla en Streamlit Community Cloud desde GitHub, seleccionando `app.py` como archivo principal. No requiere Secrets ni credenciales de servicios externos.
 
-5. Despliega la aplicación. Streamlit instalará las librerías declaradas en `requirements.txt`.
+**Importante:** el archivo SQLite vive en el sistema de archivos local de la instancia. Streamlit Community Cloud no garantiza que esos datos sobrevivan reinicios, recreación de la instancia o redespliegues. No uses esta modalidad para inventario persistente sin una estrategia externa de almacenamiento/backup. Para conservar una base SQLite, ejecuta la app en un servidor o contenedor con un volumen persistente y configura `INVENTORY_DB_PATH` apuntando a ese volumen. No compartas un archivo SQLite entre varias instancias de la app.
 
-## Seguridad de Supabase
-
-- Usa una clave publishable o `anon`, nunca la clave `service_role` en una aplicación cliente.
-- En Supabase, habilita el proveedor **Authentication > Sign In / Providers > Email**. Si está activa la confirmación de correo, el usuario deberá confirmarlo antes de iniciar sesión.
-- Activa RLS en `public.articulos` y crea una política que permita operaciones solo a usuarios autenticados. Para un inventario compartido por todas las cuentas registradas, puedes usar:
-
-	```sql
-	alter table public.articulos enable row level security;
-
-	drop policy if exists "inventory for authenticated users" on public.articulos;
-	create policy "inventory for authenticated users"
-	on public.articulos
-	for all
-	to authenticated
-	using (true)
-	with check (true);
-	```
-
-- Ese ejemplo hace que todas las cuentas registradas compartan el mismo inventario. Para inventarios privados por usuario, la tabla necesita una columna `user_id` y políticas basadas en `auth.uid()`; este código todavía no implementa esa separación.
-- Revisa y elimina políticas antiguas que concedan acceso a `anon`; la pantalla de login no sustituye las políticas RLS.
-
-La tabla `articulos` debe tener, como mínimo, las columnas `id`, `nombre`, `categoria`, `precio` y `cantidad`. El nombre debe ser único si se requiere impedir duplicados.
+La base crea automáticamente las tablas `usuarios` y `articulos`, activa claves foráneas y crea índices para búsquedas por usuario y categoría.
