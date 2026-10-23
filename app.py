@@ -18,63 +18,216 @@ def obtener_repositorio(db_path: str) -> InventoryRepository:
     return InventoryRepository(db_path)
 
 
+def aplicar_estilos() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
+
+        :root {
+            --ink: #202a26;
+            --muted: #707b74;
+            --paper: #f3f4ef;
+            --surface: #ffffff;
+            --line: #dfe4dc;
+            --jade: #286653;
+            --jade-dark: #173b32;
+            --copper: #ba6947;
+        }
+
+        html, body, [class*="css"] {
+            font-family: 'DM Sans', sans-serif;
+            color: var(--ink);
+            letter-spacing: 0;
+        }
+        .stApp { background: var(--paper); }
+        [data-testid="stHeader"] { background: transparent; }
+        [data-testid="stMainBlockContainer"] {
+            max-width: 1420px;
+            padding-top: 2.2rem;
+            padding-bottom: 3rem;
+        }
+        h1, h2, h3 {
+            color: var(--ink);
+            font-family: 'Playfair Display', Georgia, serif !important;
+            letter-spacing: 0 !important;
+        }
+        h1 { font-size: 2.55rem !important; line-height: 1.12 !important; }
+        h2 { font-size: 1.8rem !important; }
+        h3 { font-size: 1.3rem !important; }
+        [data-testid="stCaptionContainer"] p {
+            color: var(--muted);
+            font-size: 0.94rem;
+        }
+        .masthead {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--line);
+            padding-bottom: 0.9rem;
+            margin-bottom: 1.8rem;
+            color: var(--jade);
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+        .section-kicker {
+            color: var(--copper);
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+        [data-testid="stSidebar"] {
+            background: var(--jade-dark);
+            border-right: 1px solid #31594e;
+        }
+        [data-testid="stSidebar"] * { color: #f2f4ee; }
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+            color: #bdcec4;
+        }
+        [data-testid="stSidebar"] hr { border-color: #45675c; }
+        [data-testid="stMetric"] {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-top: 3px solid var(--jade);
+            border-radius: 5px;
+            padding: 1rem 1.15rem;
+        }
+        [data-testid="stMetricLabel"] p {
+            color: var(--muted);
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+        [data-testid="stMetricValue"] {
+            color: var(--ink);
+            font-family: 'Playfair Display', Georgia, serif;
+        }
+        [data-testid="stDataEditor"] {
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            background: var(--surface);
+        }
+        [data-testid="stForm"] {
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 5px;
+            padding: 1.35rem;
+        }
+        [data-baseweb="tab-list"] {
+            gap: 1.1rem;
+            border-bottom: 1px solid var(--line);
+        }
+        [data-baseweb="tab"] { color: var(--muted); }
+        [data-baseweb="tab-highlight"] { background: var(--copper); }
+        [data-testid="stButton"] button,
+        [data-testid="stFormSubmitButton"] button {
+            border-radius: 4px;
+            font-weight: 600;
+            transition: transform 140ms ease, filter 140ms ease;
+        }
+        [data-testid="stButton"] button:hover,
+        [data-testid="stFormSubmitButton"] button:hover {
+            transform: translateY(-1px);
+            filter: brightness(0.96);
+        }
+        [data-testid="stButton"] button[kind="primary"],
+        [data-testid="stFormSubmitButton"] button[kind="primary"] {
+            background: var(--jade);
+            border-color: var(--jade);
+        }
+        [data-testid="stTextInput"] input,
+        [data-testid="stNumberInput"] input {
+            background: #fff;
+            border-color: var(--line);
+        }
+        @media (max-width: 760px) {
+            [data-testid="stMainBlockContainer"] {
+                padding: 1.2rem 1rem 2rem;
+            }
+            h1 { font-size: 2rem !important; }
+            .masthead { font-size: 0.62rem; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def mostrar_acceso(repository: InventoryRepository) -> None:
-    st.subheader("Accede a tu inventario")
-    tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
+    st.markdown(
+        '<div class="section-kicker">Acceso privado</div>',
+        unsafe_allow_html=True,
+    )
+    col_intro, col_form = st.columns([0.9, 1.1], gap="large")
+    with col_intro:
+        st.subheader("Tu inventario, en orden.")
+        st.caption("Control sencillo para cada producto y cada cuenta.")
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-kicker">INVENTARIO · CONTROL · CLARIDAD</div>',
+            unsafe_allow_html=True,
+        )
 
-    with tab_login:
-        with st.form("formulario_login"):
-            email = st.text_input("Correo electrónico", key="login_email")
-            password = st.text_input(
-                "Contraseña", type="password", key="login_password"
-            )
-            enviar_login = st.form_submit_button(
-                "Iniciar sesión", type="primary", use_container_width=True
-            )
+    with col_form:
+        tab_login, tab_registro = st.tabs(["Iniciar sesión", "Crear cuenta"])
 
-        if enviar_login:
-            try:
-                usuario = repository.autenticar_usuario(email, password)
-                if usuario is None:
-                    st.error("Correo o contraseña incorrectos.")
-                else:
-                    st.session_state["usuario"] = usuario
-                    st.rerun()
-            except sqlite3.Error as exc:
-                st.error(f"No se pudo iniciar sesión en la base de datos: {exc}")
+        with tab_login:
+            with st.form("formulario_login"):
+                email = st.text_input("Correo electrónico", key="login_email")
+                password = st.text_input(
+                    "Contraseña", type="password", key="login_password"
+                )
+                enviar_login = st.form_submit_button(
+                    "Iniciar sesión", type="primary", width="stretch"
+                )
 
-    with tab_registro:
-        with st.form("formulario_registro"):
-            email_nuevo = st.text_input("Correo electrónico", key="registro_email")
-            password_nueva = st.text_input(
-                "Contraseña", type="password", key="registro_password"
-            )
-            confirmar_password = st.text_input(
-                "Confirmar contraseña", type="password", key="registro_confirmar"
-            )
-            enviar_registro = st.form_submit_button(
-                "Crear cuenta", type="primary", use_container_width=True
-            )
-
-        if enviar_registro:
-            if password_nueva != confirmar_password:
-                st.warning("Las contraseñas no coinciden.")
-            else:
+            if enviar_login:
                 try:
-                    usuario = repository.registrar_usuario(
-                        email_nuevo, password_nueva
-                    )
-                    st.session_state["usuario"] = usuario
-                    st.session_state["mensaje_exito"] = "Cuenta creada correctamente."
-                    st.rerun()
-                except ValueError as exc:
-                    st.error(str(exc))
+                    usuario = repository.autenticar_usuario(email, password)
+                    if usuario is None:
+                        st.error("Correo o contraseña incorrectos.")
+                    else:
+                        st.session_state["usuario"] = usuario
+                        st.rerun()
                 except sqlite3.Error as exc:
-                    st.error(f"No se pudo crear la cuenta: {exc}")
+                    st.error(f"No se pudo iniciar sesión en la base de datos: {exc}")
+
+        with tab_registro:
+            with st.form("formulario_registro"):
+                email_nuevo = st.text_input("Correo electrónico", key="registro_email")
+                password_nueva = st.text_input(
+                    "Contraseña", type="password", key="registro_password"
+                )
+                confirmar_password = st.text_input(
+                    "Confirmar contraseña", type="password", key="registro_confirmar"
+                )
+                enviar_registro = st.form_submit_button(
+                    "Crear cuenta", type="primary", width="stretch"
+                )
+
+            if enviar_registro:
+                if password_nueva != confirmar_password:
+                    st.warning("Las contraseñas no coinciden.")
+                else:
+                    try:
+                        usuario = repository.registrar_usuario(
+                            email_nuevo, password_nueva
+                        )
+                        st.session_state["usuario"] = usuario
+                        st.session_state["mensaje_exito"] = "Cuenta creada correctamente."
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except sqlite3.Error as exc:
+                        st.error(f"No se pudo crear la cuenta: {exc}")
 
 
 def mostrar_accion_rapida(repository: InventoryRepository, user_id: int) -> None:
-    st.sidebar.header("⚡ Acción rápida")
+    st.sidebar.markdown('<div class="section-kicker">ACCIONES</div>', unsafe_allow_html=True)
+    st.sidebar.header("Movimiento de stock")
     opcion = st.sidebar.radio(
         "Operación:", ["Agregar / Incrementar", "Retirar stock"]
     )
@@ -86,9 +239,9 @@ def mostrar_accion_rapida(repository: InventoryRepository, user_id: int) -> None
     cantidad = st.sidebar.number_input("Cantidad:", min_value=1, step=1, value=1)
 
     if opcion == "Agregar / Incrementar":
-        accion = st.sidebar.button("➕ Guardar producto", use_container_width=True)
+        accion = st.sidebar.button("➕ Guardar producto", width="stretch")
     else:
-        accion = st.sidebar.button("➖ Retirar unidades", use_container_width=True)
+        accion = st.sidebar.button("➖ Retirar unidades", width="stretch")
 
     if not accion:
         return
@@ -134,10 +287,10 @@ def mostrar_inventario(repository: InventoryRepository, user_id: int) -> None:
     categorias = df_inventario["categoria"].dropna()
     categoria_principal = categorias.mode().iloc[0] if not categorias.empty else "N/A"
 
-    metricas[0].metric("📦 Productos distintos", len(df_inventario))
-    metricas[1].metric("📊 Stock total", total_stock)
-    metricas[2].metric("💰 Valor del inventario", f"${valor_inventario:,.2f}")
-    metricas[3].metric("🏷️ Categoría principal", categoria_principal)
+    metricas[0].metric("Productos distintos", len(df_inventario))
+    metricas[1].metric("Unidades en stock", total_stock)
+    metricas[2].metric("Valor del inventario", f"${valor_inventario:,.2f}")
+    metricas[3].metric("Categoría principal", categoria_principal)
     st.divider()
 
     col_busqueda, col_filtro = st.columns([2, 1])
@@ -159,11 +312,12 @@ def mostrar_inventario(repository: InventoryRepository, user_id: int) -> None:
         )
         df_filtrado = df_filtrado[coincidencias]
 
-    st.subheader("📋 Inventario")
+    st.markdown('<div class="section-kicker">CATÁLOGO</div>', unsafe_allow_html=True)
+    st.subheader("Inventario")
     df_editado = st.data_editor(
         df_filtrado,
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         column_config={
             "id": st.column_config.NumberColumn("ID", disabled=True),
             "nombre": st.column_config.TextColumn("Producto", required=True),
@@ -184,7 +338,7 @@ def mostrar_inventario(repository: InventoryRepository, user_id: int) -> None:
     col_guardar, _ = st.columns([1, 3])
     with col_guardar:
         if st.button(
-            "💾 Guardar cambios", type="primary", use_container_width=True
+            "💾 Guardar cambios", type="primary", width="stretch"
         ):
             try:
                 repository.sincronizar_cambios(
@@ -202,8 +356,12 @@ def main() -> None:
     st.set_page_config(
         page_title="Sistema de Inventario", page_icon="🛍️", layout="wide"
     )
-    st.title("🛍️ Control de Inventario Multicategoría")
-    st.caption("Inventario local con cuentas independientes.")
+    aplicar_estilos()
+    st.markdown(
+        '<div class="masthead"><span>VERDE / INVENTARIO</span>'
+        '<span>CONTROL DE EXISTENCIAS</span></div>',
+        unsafe_allow_html=True,
+    )
 
     try:
         repository = obtener_repositorio(str(DB_PATH))
@@ -219,8 +377,10 @@ def main() -> None:
         return
 
     user_id = int(usuario["id"])
+    st.title("Inventario")
+    st.caption("Resumen operativo de tus productos y existencias.")
     st.sidebar.caption(f"Sesión: {usuario['email']}")
-    if st.sidebar.button("Cerrar sesión", use_container_width=True):
+    if st.sidebar.button("Cerrar sesión", width="stretch"):
         st.session_state.pop("usuario", None)
         st.rerun()
 
